@@ -5,7 +5,7 @@
 #PJM -L elapse=48:00:00
 #PJM -g gc64
 source ~/.bashrc
-module load cuda/11.8
-conda activate cdvae
+module load cuda/11.1
+source venv/bin/activate
 pip install -e .
-python cdvae/run.py data=perov expname=perov
+HYDRA_FULL_ERROR=1 python cdvae/run.py data=perov expname=perov
