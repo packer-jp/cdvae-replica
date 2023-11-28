@@ -14,13 +14,14 @@ from torch_geometric.data import DataLoader
 from cdvae.common.utils import PROJECT_ROOT
 from cdvae.common.data_utils import get_scaler_from_data_list
 
+
 def worker_init_fn(id: int):
     """
     DataLoaders workers init function.
 
     Initialize the numpy.random seed correctly for each worker, so that
     random augmentations between workers and/or epochs are not identical.
-    
+
     If a global seed is set, the augmentations are deterministic.
 
     https://pytorch.org/docs/stable/notes/randomness.html#dataloader
@@ -38,7 +39,7 @@ class CrystDataModule(pl.LightningDataModule):
         datasets: DictConfig,
         num_workers: DictConfig,
         batch_size: DictConfig,
-        scaler_path = None
+        scaler_path=None
     ):
         super().__init__()
         self.datasets = datasets
@@ -51,7 +52,7 @@ class CrystDataModule(pl.LightningDataModule):
 
         self.get_scaler(scaler_path)
 
-    def prepare_data():
+    def prepare_data(self):
         # Download only
         pass
 
@@ -68,8 +69,9 @@ class CrystDataModule(pl.LightningDataModule):
                 key=train_dataset.prop
             )
         else:
-            self.lattice_scaler = torch.load(Path(scaler_path)  / "lattice_scaler.pt")
-            self.scaler = torch.load(Path(scaler_path) / "prpr_scaler.pt")
+            self.lattice_scaler = torch.load(
+                Path(scaler_path) / "lattice_scaler.pt")
+            self.scaler = torch.load(Path(scaler_path) / "prop_scaler.pt")
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -105,7 +107,7 @@ class CrystDataModule(pl.LightningDataModule):
             num_workers=self.num_workers.train,
             worker_init_fn=worker_init_fn
         )
-    
+
     def val_dataloader(self) -> Sequence[DataLoader]:
         return [
             DataLoader(
@@ -138,6 +140,7 @@ class CrystDataModule(pl.LightningDataModule):
             f"{self.batch_size=}, "
         )
 
+
 @hydra.main(config_path=str(PROJECT_ROOT / "conf"), config_name="default")
 def main(cfg: omegaconf.DictConfig):
     datamodule: pl.LightningDataModule = hydra.utils.instantiate(
@@ -146,6 +149,7 @@ def main(cfg: omegaconf.DictConfig):
     datamodule.setup("fit")
     import pdb
     pdb.set_trace()
+
 
 if __name__ == "__main__":
     main()

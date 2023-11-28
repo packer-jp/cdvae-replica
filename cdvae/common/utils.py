@@ -67,8 +67,10 @@ def log_hyperparameters(
     hparams = OmegaConf.to_container(cfg, resolve=True)
 
     # save number of model parameters
-    hparams[f"{STATS_KEY}/params_total"] = sum(n.numel()
-                                              for p in model.parameters())
+    hparams[f"{STATS_KEY}/params_total"] = sum(
+        p.numel()
+        for p in model.parameters()
+    )
     hparams[f"{STATS_KEY}/params_trainable"] = sum(
         p.numel() for p in model.parameters() if p.requires_grad
     )
@@ -77,7 +79,7 @@ def log_hyperparameters(
     )
 
     # send hparams to all loggers
-    trainer.logger.log_hyperparams()
+    trainer.logger.log_hyperparams(hparams)
 
     # disable logging any more hyperparameters for all loggers
     # (this is just a trick to prevent trainer from logging hparams of model, since wi already did that above)
@@ -89,7 +91,7 @@ load_envs()
 
 # Set the cwd to the project root
 PROJECT_ROOT: Path = Path(get_env("PROJECT_ROOT"))
-assert(
+assert (
     PROJECT_ROOT.exists()
 ), "You must configure the PROJECT_ROOT environment variable in a .env file!"
 
