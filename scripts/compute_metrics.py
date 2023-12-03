@@ -7,6 +7,7 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 from p_tqdm import p_map
+from scipy.stats import wasserstein_distance
 
 from pymatgen.core.structure import Structure
 from pymatgen.core.composition import Composition
@@ -16,15 +17,24 @@ from matminer.featurizers.site.fingerprint import CrystalNNFingerprint
 from matminer.featurizers.composition.composite import ElementProperty
 
 from eval_utils import (
-    smact_validity,
-    structure_validity,
-    load_data,
-    get_crystals_list,
-    load_config,
+    smact_validity, structure_validity, CompScaler, get_fp_pdist,
+    load_config, load_data, get_crystals_list, prop_model_eval, compute_cov
 )
 
 CrystalNNFP = CrystalNNFingerprint.from_preset("ops")
 CompFP = ElementProperty.from_preset('magpie')
+
+Percentiles = {
+    'mp20': np.array([-3.17562208, -2.82196882, -2.52814761]),
+    'carbon': np.array([-154.527093, -154.45865733, -154.44206825]),
+    'perovskite': np.array([0.43924842, 0.61202443, 0.7364607]),
+}
+
+COV_Cutoffs = {
+    'mp20': {'struc': 0.4, 'comp': 10.},
+    'carbon': {'struc': 0.2, 'comp': 4.},
+    'perovskite': {'struc': 0.2, 'comp': 4},
+}
 
 
 class Crystal:
@@ -60,7 +70,7 @@ class Crystal:
                 self.invalid_reason = 'construction_raises_exception'
             if self.structure.volume < 0.1:
                 self.constructed = False
-                self.invalid_rason = 'unrealistically_small_lattice'
+                self.invalid_reason = 'unrealistically_small_lattice'
 
     def get_composition(self):
         elem_counter = Counter(self.atom_types)
@@ -92,7 +102,7 @@ class Crystal:
                 for i in range(len(self.structure))
             ]
         except Exception:
-            # counts crystals as invalid if fingerprint cannot be constructed.
+            # counts crystal as invalid if fingerprint cannot be constructed.
             self.valid = False
             self.comp_fp = None
             self.struct_fp = None
@@ -143,6 +153,98 @@ class RecEval:
 
     def get_metrics(self):
         return self.get_match_rate_and_rms()
+
+
+class GenEval:
+    def __init__(self, pred_crys, gt_crys, n_samples=1000, eval_model_name=None):
+        self.crys = pred_crys
+        self.gt_crys = gt_crys
+        self.n_samples = n_samples
+        self.eval_model_name = eval_model_name
+
+        valid_crys = [c for c in pred_crys if c.valid]
+        if len(valid_crys) >= n_samples:
+            sampled_indices = np.random.choice(
+                len(valid_crys),
+                n_samples,
+                replace=False
+            )
+            self.valid_samples = [valid_crys[i] for i in sampled_indices]
+        else:
+            raise Exception(
+                f'not enough valid crystals in the predicted set: {len(valid_crys)}/{n_samples}'
+            )
+
+    def get_validity(self):
+        comp_valid = np.array([c.comp_valid for c in self.crys]).mean()
+        struct_valid = np.array([c.struct_valid for c in self.crys]).mean()
+        valid = np.array([c.valid for c in self.crys]).mean()
+        return {
+            'comp_valid': comp_valid,
+            'struct_valid': struct_valid,
+            'valid': valid
+        }
+
+    def get_comp_diversity(self):
+        comp_fps = [c.comp_fp for c in self.valid_samples]
+        comp_fps = CompScaler.transform(comp_fps)
+        comp_div = get_fp_pdist(comp_fps)
+        return {'comp_div': comp_div}
+
+    def get_struct_diversity(self):
+        return {'struct_div': get_fp_pdist([c.struct_fp for c in self.valid_samples])}
+
+    def get_density_wdist(self):
+        pred_densities = [c.structure.density for c in self.valid_samples]
+        gt_densities = [c.structure.density for c in self.gt_crys]
+        wdist_density = wasserstein_distance(pred_densities, gt_densities)
+        return {'wdist_density': wdist_density}
+
+    def get_num_elem_wdist(self):
+        pred_nelems = [
+            len(set(c.structure.species))
+            for c in self.valid_samples
+        ]
+        gt_nelems = [len(set(c.structure.species)) for c in self.gt_crys]
+        wdist_num_elems = wasserstein_distance(pred_nelems, gt_nelems)
+        return {'wdist_num_elems': wdist_num_elems}
+
+    def get_prop_wdist(self):
+        if self.eval_model_name is not None:
+            pred_props = prop_model_eval(
+                self.eval_model_name,
+                [c.dict for c in self.valid_samples]
+            )
+            gt_props = prop_model_eval(
+                self.eval_model_name,
+                [c.dict for c in self.gt_crys]
+            )
+            wdist_prop = wasserstein_distance(pred_props, gt_props)
+            return {'wdist_prop': wdist_prop}
+        else:
+            return {'wdist_prop': None}
+
+    def get_coverage(self):
+        cutoff_dict = COV_Cutoffs[self.eval_model_name]
+        (cov_metrics_dict, combined_dist_dict) = compute_cov(
+            self.crys,
+            self.gt_crys,
+            struc_cutoff=cutoff_dict['struc'],
+            comp_cutoff=cutoff_dict['comp']
+        )
+        return cov_metrics_dict
+
+    def get_metrics(self):
+        metrics = {}
+        metrics.update(self.get_validity())
+        metrics.update(self.get_comp_diversity())
+        metrics.update(self.get_struct_diversity())
+        metrics.update(self.get_density_wdist())
+        metrics.update(self.get_num_elem_wdist())
+        metrics.update(self.get_prop_wdist())
+        print(metrics)
+        metrics.update(self.get_coverage())
+        return metrics
 
 
 def get_file_paths(root_path, task, label='', suffix='pt'):
@@ -206,6 +308,25 @@ def main(args):
         recon_metrics = rec_evaluator.get_metrics()
         all_metrics.update(recon_metrics)
 
+    if 'gen' in args.tasks:
+        gen_file_path = get_file_paths(args.root_path, 'gen', args.label)
+        recon_file_path = get_file_paths(args.root_path, 'recon', args.label)
+        crys_array_list, _ = get_crystal_array_list(gen_file_path)
+        gen_crys = p_map(lambda x: Crystal(x), crys_array_list)
+        if 'recon' not in args.tasks:
+            _, true_crystal_array_list = get_crystal_array_list(
+                recon_file_path
+            )
+            gt_crys = p_map(lambda x: Crystal(x), true_crystal_array_list)
+
+        gen_evaluator = GenEval(
+            gen_crys,
+            gt_crys,
+            eval_model_name=eval_model_name
+        )
+        gen_metrics = gen_evaluator.get_metrics()
+        all_metrics.update(gen_metrics)
+
     print(all_metrics)
 
     if args.label == '':
@@ -214,6 +335,7 @@ def main(args):
         metrics_out_file = f'eval_metrics_{args.label}.json'
     metrics_out_file = os.path.join(args.root_path, metrics_out_file)
 
+    # only overwrite metrics computed in the new run.
     if Path(metrics_out_file).exists():
         with open(metrics_out_file, 'r') as f:
             written_metrics = json.load(f)
@@ -221,7 +343,7 @@ def main(args):
                 written_metrics.update(all_metrics)
             else:
                 with open(metrics_out_file, 'w') as f:
-                    json.dump(written_metrics, f)
+                    json.dump(all_metrics, f)
         if isinstance(written_metrics, dict):
             with open(metrics_out_file, 'w') as f:
                 json.dump(written_metrics, f)

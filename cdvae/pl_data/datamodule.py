@@ -26,9 +26,9 @@ def worker_init_fn(id: int):
 
     https://pytorch.org/docs/stable/notes/randomness.html#dataloader
     """
-    uint64_seed = torch.initial_seed
+    uint64_seed = torch.initial_seed()
     ss = np.random.SeedSequence([uint64_seed])
-    # More than 128bits (4 32-words) would be overkill.
+    # More than 128 bits (4 32-bit words) would be overkill.
     np.random.seed(ss.generate_state(4))
     random.seed(uint64_seed)
 
@@ -39,7 +39,7 @@ class CrystDataModule(pl.LightningDataModule):
         datasets: DictConfig,
         num_workers: DictConfig,
         batch_size: DictConfig,
-        scaler_path=None
+        scaler_path=None,
     ):
         super().__init__()
         self.datasets = datasets
@@ -52,8 +52,8 @@ class CrystDataModule(pl.LightningDataModule):
 
         self.get_scaler(scaler_path)
 
-    def prepare_data(self):
-        # Download only
+    def prepare_data(self) -> None:
+        # download only
         pass
 
     def get_scaler(self, scaler_path):
@@ -62,7 +62,7 @@ class CrystDataModule(pl.LightningDataModule):
             train_dataset = hydra.utils.instantiate(self.datasets.train)
             self.lattice_scaler = get_scaler_from_data_list(
                 train_dataset.cached_data,
-                key="scaled_lattice"
+                key='scaled_lattice'
             )
             self.scaler = get_scaler_from_data_list(
                 train_dataset.cached_data,
@@ -70,8 +70,8 @@ class CrystDataModule(pl.LightningDataModule):
             )
         else:
             self.lattice_scaler = torch.load(
-                Path(scaler_path) / "lattice_scaler.pt")
-            self.scaler = torch.load(Path(scaler_path) / "prop_scaler.pt")
+                Path(scaler_path) / 'lattice_scaler.pt')
+            self.scaler = torch.load(Path(scaler_path) / 'prop_scaler.pt')
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -134,22 +134,22 @@ class CrystDataModule(pl.LightningDataModule):
 
     def __repr__(self) -> str:
         return (
-            f"{self.__class__.__name__}("
-            f"{self.datasets=}, "
-            f"{self.num_workers=}, "
-            f"{self.batch_size=}, "
+            f'{self.__class__.__name__}('
+            f'{self.datasets=}, '
+            f'{self.num_workers=}, '
+            f'{self.batch_size=})'
         )
 
 
-@hydra.main(config_path=str(PROJECT_ROOT / "conf"), config_name="default")
+@hydra.main(config_path=str(PROJECT_ROOT / 'conf'), config_name='default')
 def main(cfg: omegaconf.DictConfig):
     datamodule: pl.LightningDataModule = hydra.utils.instantiate(
         cfg.data.datamodule, _recursive_=False
     )
-    datamodule.setup("fit")
+    datamodule.setup('fit')
     import pdb
     pdb.set_trace()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

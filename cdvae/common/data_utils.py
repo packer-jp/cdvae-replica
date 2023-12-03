@@ -750,3 +750,95 @@ def mard(targets, preds):
     '''Mean absolute relative difference.'''
     assert torch.all(targets > 0.)
     return torch.mean(torch.abs(targets - preds) / targets)
+
+
+def batch_accuracy_precision_recall(
+    pred_edge_probs,
+    edge_overlap_mask,
+    num_bonds
+):
+    if (pred_edge_probs is None and edge_overlap_mask is None and
+            num_bonds is None):
+        return 0., 0., 0.
+    pred_edges = pred_edge_probs.max(dim=1)[1].float()
+    target_edges = edge_overlap_mask.float()
+
+    start_idx = 0
+    accuracies, precisions, recalls = [], [], []
+    for num_bond in num_bonds.tolist():
+        pred_edge = pred_edges.narrow(
+            0, start_idx, num_bond).detach().cpu().numpy()
+        target_edge = target_edges.narrow(
+            0, start_idx, num_bond).detach().cpu().numpy()
+
+        accuracies.append(accuracy_score(target_edge, pred_edge))
+        precisions.append(precision_score(
+            target_edge, pred_edge, average='binary'))
+        recalls.append(recall_score(target_edge, pred_edge, average='binary'))
+
+        start_idx = start_idx + num_bond
+
+    return np.mean(accuracies), np.mean(precisions), np.mean(recalls)
+
+
+class StandardScaler:
+    """A :class:`StandardScaler` normalizes the features of a dataset.
+    When it is fit on a dataset, the :class:`StandardScaler` learns the
+        mean and standard deviation across the 0th axis.
+    When transforming a dataset, the :class:`StandardScaler` subtracts the
+        means and divides by the standard deviations.
+    """
+
+    def __init__(self, means=None, stds=None, replace_nan_token=None):
+        """
+        :param means: An optional 1D numpy array of precomputed means.
+        :param stds: An optional 1D numpy array of precomputed standard deviations.
+        :param replace_nan_token: A token to use to replace NaN entries in the features.
+        """
+        self.means = means
+        self.stds = stds
+        self.replace_nan_token = replace_nan_token
+
+    def fit(self, X):
+        """
+        Learns means and standard deviations across the 0th axis of the data :code:`X`.
+        :param X: A list of lists of floats (or None).
+        :return: The fitted :class:`StandardScaler` (self).
+        """
+        X = np.array(X).astype(float)
+        self.means = np.nanmean(X, axis=0)
+        self.stds = np.nanstd(X, axis=0)
+        self.means = np.where(np.isnan(self.means),
+                              np.zeros(self.means.shape), self.means)
+        self.stds = np.where(np.isnan(self.stds),
+                             np.ones(self.stds.shape), self.stds)
+        self.stds = np.where(self.stds == 0, np.ones(
+            self.stds.shape), self.stds)
+
+        return self
+
+    def transform(self, X):
+        """
+        Transforms the data by subtracting the means and dividing by the standard deviations.
+        :param X: A list of lists of floats (or None).
+        :return: The transformed data with NaNs replaced by :code:`self.replace_nan_token`.
+        """
+        X = np.array(X).astype(float)
+        transformed_with_nan = (X - self.means) / self.stds
+        transformed_with_none = np.where(
+            np.isnan(transformed_with_nan), self.replace_nan_token, transformed_with_nan)
+
+        return transformed_with_none
+
+    def inverse_transform(self, X):
+        """
+        Performs the inverse transformation by multiplying by the standard deviations and adding the means.
+        :param X: A list of lists of floats.
+        :return: The inverse transformed data with NaNs replaced by :code:`self.replace_nan_token`.
+        """
+        X = np.array(X).astype(float)
+        transformed_with_nan = X * self.stds + self.means
+        transformed_with_none = np.where(
+            np.isnan(transformed_with_nan), self.replace_nan_token, transformed_with_nan)
+
+        return transformed_with_none

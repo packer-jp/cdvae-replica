@@ -7,4 +7,4 @@
 module load cuda/11.1
 source venv/bin/activate
 pip install -e .
-python scripts/evaluate.py --model_path /work/04/gc64/c64080/materials/cdvae-replica/hydra/singlerun/2023-11-26/perov --tasks recon
+python scripts/evaluate.py --model_path /work/04/gc64/c64080/materials/cdvae-replica/hydra/singlerun/2023-12-02/perov --tasks recon
